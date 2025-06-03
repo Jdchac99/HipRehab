@@ -2,14 +2,19 @@ import math
 import serial
 import time
 
-# Configuración del puerto serial (ajusta el puerto según tu configuración)
+# Configuración del puerto serial para Bluetooth (ajusta el puerto según tu configuración en Windows)
 try:
-    bt_serial = serial.Serial('/dev/ttyACM0', 9600, timeout=0.1)  # Ejemplo para Linux
+    bt_serial = serial.Serial('COM3', 9600, timeout=0.1)  # Ejemplo: 'COM3' es un puerto común en Windows
 except serial.SerialException as e:
     print(f"Error al abrir el puerto Bluetooth: {e}")
     bt_serial = None
 
-serial_port = serial.Serial('/dev/ttyUSB0', 9600, timeout=0.1) # Ejemplo para Linux
+# Configuración del puerto serial para la comunicación con Teensy (ajusta el puerto según tu configuración en Windows)
+try:
+    serial_port = serial.Serial('COM4', 9600, timeout=0.1)  # Ejemplo: 'COM4' es otro puerto común en Windows
+except serial.SerialException as e:
+    print(f"Error al abrir el puerto serial (Teensy): {e}")
+    serial_port = None
 
 pot_pin = 14  # En Arduino, esto se refiere a A0 (pin analógico 0), no directamente traducible
 
@@ -33,11 +38,14 @@ def comparar_angulos(angulo_potenciometro, angulo_app):
 
 def setup():
     if bt_serial:
-        print("Bluetooth inicializado.")
+        print("Bluetooth inicializado en {}".format(bt_serial.port))
     else:
         print("Advertencia: No se pudo inicializar el puerto Bluetooth.")
-    serial_port.reset_input_buffer()
-    print("Teensy conectado. Esperando comando...")
+    if serial_port:
+        serial_port.reset_input_buffer()
+        print("Teensy conectado en {}. Esperando comando...".format(serial_port.port))
+    else:
+        print("Advertencia: No se pudo inicializar el puerto serial (Teensy).")
 
 def loop():
     global last_angle, max_angle_reached, max_torque_reached, subiendo_angulo
@@ -46,22 +54,26 @@ def loop():
 
     last_send = time.time()
     pot_value = 0
-    # Emular la lectura analógica del potenciómetro
-    # En un sistema real, necesitarías una interfaz con el hardware
-    try:
-        if serial_port.in_waiting > 0:
+    # Emular la lectura analógica del potenciómetro leyendo desde el puerto serial
+    if serial_port and serial_port.in_waiting > 0:
+        try:
             line = serial_port.readline().decode('utf-8').rstrip()
             if line.startswith("valorPot:"):
                 try:
                     pot_value = int(line.split(":")[1])
                 except ValueError:
                     print(f"Error al convertir el valor del potenciómetro: {line}")
-    except serial.SerialException as e:
-        print(f"Error de lectura del puerto serial: {e}")
+        except serial.SerialException as e:
+            print(f"Error de lectura del puerto serial (Teensy): {e}")
+        except UnicodeDecodeError as e:
+            print(f"Error de decodificación del puerto serial (Teensy): {e}")
 
     # Emular el envío por Bluetooth
     if bt_serial:
-        bt_serial.write(f"valorPot:{pot_value}\n".encode('utf-8'))
+        try:
+            bt_serial.write(f"valorPot:{pot_value}\n".encode('utf-8'))
+        except serial.SerialException as e:
+            print(f"Error al escribir en el puerto Bluetooth: {e}")
 
     current_angle_base = 0.0
     val = 0
@@ -71,7 +83,7 @@ def loop():
         current_angle_base = -0.3008 * pot_value + 205.7
         val = 67
     else:
-        current_angle_base = -0.2866 * pot_value + 140.56
+        current_angle_base = -0.2866 * potValue + 140.56
         val = 12
 
     current_angle = current_angle_base
@@ -95,38 +107,53 @@ def loop():
             if abs(current_angle) < limit:
                 print(f"Máximo Ángulo Alcanzado: {max_angle_reached}")
                 if bt_serial:
-                    bt_serial.write(f"AnguloMaximo:{max_angle_reached}\n".encode('utf-8'))
+                    try:
+                        bt_serial.write(f"AnguloMaximo:{max_angle_reached}\n".encode('utf-8'))
+                    except serial.SerialException as e:
+                        print(f"Error al escribir en el puerto Bluetooth: {e}")
                 comparar_angulos(max_angle_reached, angulo_meta_app)
                 if ejercicio == "Extensión":
                     max_angle_radians = math.radians(max_angle_reached)
                     max_torque_reached = 51.0 * max_angle_radians
                     if bt_serial:
-                        bt_serial.write(f"TorqueMaximo:{max_torque_reached}\n".encode('utf-8'))
+                        try:
+                            bt_serial.write(f"TorqueMaximo:{max_torque_reached}\n".encode('utf-8'))
+                        except serial.SerialException as e:
+                            print(f"Error al escribir en el puerto Bluetooth: {e}")
                 else:
                     max_angle_radians = math.radians(max_angle_reached)
                     max_torque_reached = 37.0 * max_angle_radians
                     if bt_serial:
-                        bt_serial.write(f"TorqueMaximo:{max_torque_reached}\n".encode('utf-8'))
+                        try:
+                            bt_serial.write(f"TorqueMaximo:{max_torque_reached}\n".encode('utf-8'))
+                        except serial.SerialException as e:
+                            print(f"Error al escribir en el puerto Bluetooth: {e}")
 
                 if angulo_meta_app != -1 and max_angle_reached >= angulo_meta_app:
                     repeticiones_completas += 1
                     print(f"Repetición Completa: {repeticiones_completas}")
                     print(f"Repeticiones Meta: {repeticiones_meta}")
                     if bt_serial:
-                        bt_serial.write(f"RepeticionesCompletas:{repeticiones_completas}\n".encode('utf-8'))
-                    # if repeticiones_completas >= repeticiones_meta and repeticiones_meta != 0:
-                    #     print("¡Meta de repeticiones alcanzada! Reiniciando contador.")
-                    #     repeticiones_completas = 0  # Reinicia el contador
+                        try:
+                            bt_serial.write(f"RepeticionesCompletas:{repeticiones_completas}\n".encode('utf-8'))
+                        except serial.SerialException as e:
+                            print(f"Error al escribir en el puerto Bluetooth: {e}")
                 elif (max_angle_reached > limit or max_angle_reached < limit) and angulo_meta_app != -1 and max_angle_reached < angulo_meta_app:
                     repeticiones_incompletas += 1
                     print(f"Repetición Incompleta: {repeticiones_incompletas}")
                     if bt_serial:
-                        bt_serial.write(f"RepeticionesIncompletas:{repeticiones_incompletas}\n".encode('utf-8'))
+                        try:
+                            bt_serial.write(f"RepeticionesIncompletas:{repeticiones_incompletas}\n".encode('utf-8'))
+                        except serial.SerialException as e:
+                            print(f"Error al escribir en el puerto Bluetooth: {e}")
                 elif (max_angle_reached > limit or max_angle_reached < -limit) and angulo_meta_app == -1:
                     repeticiones_completas += 1
                     print(f"Repetición Completa (sin meta): {repeticiones_completas}")
                     if bt_serial:
-                        bt_serial.write(f"RepeticionesCompletas:{repeticiones_completas}\n".encode('utf-8'))
+                        try:
+                            bt_serial.write(f"RepeticionesCompletas:{repeticiones_completas}\n".encode('utf-8'))
+                        except serial.SerialException as e:
+                            print(f"Error al escribir en el puerto Bluetooth: {e}")
                 subiendo_angulo = False
                 max_angle_reached = -1000.0
 
@@ -198,3 +225,10 @@ if __name__ == "__main__":
     setup()
     while True:
         loop()
+
+
+     
+           
+         
+            
+  
